@@ -12,13 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRouter } from "next/navigation";
-import { setEmailCookie } from "./cookies";
-
-interface Account {
-  email: string;
-  _id: string;
-}
-
+import { changeCookiesUserData, setCookiesUserData, setEmailCookie } from "./CookiesUser"; 
+ 
 function generateId() {
   const characters = "abcdefghijklmnopqrstuvwxyz0123456789";
   let id = "";
@@ -43,8 +38,7 @@ export default function Home() {
       ?.value;
     const pass = (document.getElementById("passRegister") as HTMLInputElement)
       ?.value;
-    const emailData = localStorage.setItem("emailData", email);
-    console.log(email, pass);
+    localStorage.setItem("emailData", email); 
     const response = await fetch("http://localhost:1000/createUser", {
       method: "POST",
       headers: {
@@ -54,28 +48,35 @@ export default function Home() {
     });
 
     const result = await response.json();
+
     if (response.status === 400) {
       console.log(result);
     } else {
+      setCookiesUserData({email: email, id: id});
       router.push("/pages/deployProject");
     }
   }
+
   async function Login() {
     const email = (document.getElementById("mailLogin") as HTMLInputElement)
       ?.value;
-    const response = await fetch("http://localhost:1000/getUserData", {
+    const pass = (document.getElementById("mailPass") as HTMLInputElement)
+        ?.value;
+    const response = await fetch("http://localhost:1000/getDataUser", {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
-        emaildata: `${email}`,
+        "emaildata": `${email}`,
+        "pass": `${pass}`,
       },
     });
-
     const result = await response.json();
+    console.log(result)
     if (response.status === 400) {
       console.log(result);
-    } else {
-      setEmailCookie(email);
+    } else { 
+      console.log({email: email, id: result.id})
+      changeCookiesUserData({email: email, id: result.id})
       router.push("/pages/dashboard");
     }
   }
@@ -83,18 +84,18 @@ export default function Home() {
     <>
       <div className="flex flex-col items-center justify-center h-screen">
         <Tabs
-          defaultValue="account"
+          defaultValue="registrer"
           className="w-[400px] flex flex-col justify-center"
         >
           <TabsList>
-            <TabsTrigger value="login">login</TabsTrigger>
-            <TabsTrigger value="registrer">registrer</TabsTrigger>
+            <TabsTrigger value="login">Login</TabsTrigger>
+            <TabsTrigger value="registrer">Register</TabsTrigger>
           </TabsList>
           <TabsContent value="login">
             <Card>
               <CardHeader>
                 <CardTitle>Card Login</CardTitle>
-                <CardDescription></CardDescription>
+                <CardDescription>Section Login</CardDescription>
               </CardHeader>
               <CardContent>
                 <Input placeholder="mail" id="mailLogin" type="email" />
@@ -110,7 +111,7 @@ export default function Home() {
             <Card>
               <CardHeader>
                 <CardTitle>Card Register</CardTitle>
-                <CardDescription>Card Description</CardDescription>
+                <CardDescription>Section Register</CardDescription>
               </CardHeader>
               <CardContent>
                 <Input placeholder="mail" id="mailRegister" type="email" />

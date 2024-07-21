@@ -2,255 +2,234 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const { exec } = require("child_process");
-const WebSocket = require('ws');
+const WebSocket = require("ws");
+const vhost = require("vhost");
+const path = require("path");
+
 const User = require("./models/User");
 const Repository = require("./models/Repository");
-const vhost = require('vhost');
 
 const app = express();
 const PORT = process.env.PORT || 1000;
-const MONGODB_URI = "mongodb://localhost:27017/vercel";
+const MONGODB_URI =
+  process.env.MONGODB_URI || "mongodb://localhost:27017/vercel";
+const WS_PORT = process.env.WS_PORT || 8080;
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-const wss = new WebSocket.Server({ port: 8080 });
+// WebSocket server
+const wss = new WebSocket.Server({ port: WS_PORT });
 
-wss.on('connection', (ws) => {
-  console.log('New client connected');
-  ws.send('Sistemas Listos!');
+wss.on("connection", (ws) => {
+  console.log("New client connected");
+  ws.send("Systems Ready!");
 });
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => {
-  console.log("Conectado a MongoDB");
-})
-.catch((err) => {
-  console.error("Error al conectar a MongoDB", err);
-});
+// Database connection
+mongoose
+  .connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log("Connected to MongoDB"))
+  .catch((err) => console.error("Error connecting to MongoDB", err));
 
+// Helper functions
+const sendWebSocketMessage = (message) => {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+};
+
+const executeCommand = (command, cwd) => {
+  return new Promise((resolve, reject) => {
+    const process = exec(command, { cwd });
+
+    process.stdout.on("data", (data) => {
+      console.log(`stdout: ${data}`);
+      sendWebSocketMessage(`stdout: ${data}`);
+    });
+
+    process.stderr.on("data", (data) => {
+      console.error(`stderr: ${data}`);
+      sendWebSocketMessage(`stderr: ${data}`);
+    });
+
+    process.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Process exited with code ${code}`));
+      }
+    });
+  });
+};
+
+// Routes
 app.post("/createUser", async (req, res) => {
   try {
     const user = new User(req.body);
     await user.save();
-    console.log('User created:', user);
-    res.status(201).send(user);
+    console.log("User created:", user);
+    res.status(201).json(user);
   } catch (err) {
-    console.error('Error creating user:', err);
-    res.status(400).send(err);
+    console.error("Error creating user:", err);
+    res.status(400).json({ error: err.message });
   }
 });
 
 app.post("/createRepository", async (req, res) => {
   try {
-    console.log(req.headers);
-    
-    const userGit = req.headers.usergit;
-    const nameArchive = req.headers.namearchive;
-    const port = req.headers.port;
-    const idMail = req.headers.idmail;
-    const command = req.headers.command;
-
-    if (!userGit || !nameArchive) {
-      throw new Error("userGit and nameArchive are required");
+    const { usergit, namearchive, port, email, idmail, command } = req.headers;
+    if (!usergit || !namearchive) {
+      throw new Error("usergit and nameArchive are required");
     }
 
     const repository = new Repository({
-      userGit,
-      nameArchive,
+      usergit,
+      namearchive,
       port,
-      idMail,
-      command
+      email,
+      idmail,
+      command,
     });
 
     await repository.save();
-
-    console.log('Repository created:', repository);
-    res.status(201).send(repository);
+    console.log("Repository created:", repository);
+    res.status(201).json(repository);
   } catch (err) {
-    console.error('Error creating repository:', err);
-    res.status(400).send(err);
+    console.error("Error creating repository:", err);
+    res.status(400).json({ error: err.message });
   }
 });
 
 app.post("/deployGit", async (req, res) => {
+  const { urlGit, namearchive, usergit, command, port, email } = req.body;
+  const projectPath = path.join(email, usergit, namearchive);
   try {
-    const { urlGit, nameArchive, userGit, command, port } = req.body;
+    await executeCommand(`git clone ${urlGit} ${projectPath}`);
+    console.log(`Repository cloned successfully in: ${projectPath}`);
+    sendWebSocketMessage("Repository cloned successfully");
 
-    const process = exec(`git clone ${urlGit} ./${userGit}/${nameArchive}`);
-    
-    process.stdout.on('data', (data) => {
-      console.log(`stdout: ${data}`);
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(`stdout: ${data}`);
-        }
+    const vhostDomain = `${namearchive}-localhost:${port}`;
+    const redirectUrl = `http://${vhostDomain}`;
+
+    await startProject(usergit, namearchive, command, port, email);
+
+    app.use(
+      vhost(vhostDomain, (req, res) => {
+        res.redirect(redirectUrl);
+      })
+    );
+
+    res
+      .status(201)
+      .json({
+        message: "Repository cloned and initialized successfully",
+        url: redirectUrl,
       });
-    });
-
-    process.stderr.on('data', (data) => {
-      console.error(`stderr: ${data}`);
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(`stderr: ${data}`);
-        }
-      });
-    });
-
-    process.on('close', async (code) => {
-      if (code === 0) {
-        console.log(`Repositorio clonado exitosamente en: ./${userGit}/${nameArchive}`);
-        wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(`Repositorio clonado exitosamente`);
-          }
-        });
-
-        try {
-          const vhostDomain = `${nameArchive}-localhost:${port}`;
-          const redirectUrl = `http://${vhostDomain}`;
-          
-          await startProject(userGit, nameArchive, command, wss, port);
-
-          app.use(vhost(vhostDomain, (req, res) => {
-            res.redirect(redirectUrl);
-          }));
-
-          res.status(201).send({ message: "Repositorio clonado e inicializado exitosamente", url: redirectUrl });
-        } catch (err) {
-          console.error('Error initializing project:', err);
-          res.status(500).send({ error: "Error al inicializar el proyecto" });
-        }
-      } else {
-        const errorMessage = `Proceso terminado con código de error: ${code}`;
-        console.error(errorMessage);
-        wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(errorMessage);
-          }
-        });
-        res.status(500).send({ error: errorMessage });
-      }
-    });
   } catch (err) {
-    console.error('Error in deployGit:', err);
-    res.status(400).send(err);
+    console.error("Error in deployGit:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.get("/getUserData", async (req, res) => {
+app.get("/getDataUser", async (req, res) => {
   try {
-    const { emaildata } = req.headers;
-    const user = await User.findOne({ email: emaildata });
+    const { emaildata, idmail, pass } = req.headers;
+    console.log("getDataUser" + JSON.stringify(req.headers));
+    const user = await User.findOne({
+      ...(emaildata && { email: emaildata }),
+      ...(pass && { pass: pass }),
+      ...(idmail && { id: idmail }),
+    });
     if (user) {
-      console.log('User found:', user);
-      res.status(200).send(user);
+      console.log("User found:", user);
+      res.status(200).json(user);
     } else {
-      console.log('User not found');
-      res.status(404).send({ error: 'User not found' });
+      console.log("User not found");
+      res.status(404).json({ error: "User not found" });
     }
   } catch (err) {
-    console.error('Error getting user data:', err);
-    res.status(400).send(err);
+    console.error("Error getting user data:", err);
+    res.status(400).json({ error: err.message });
   }
 });
 
 app.get("/getDataRepository", async (req, res) => {
   try {
-    console.log(req.headers, "getDataRepository");
-    const repository = await Repository.find( req.headers.idMail );
-    if (repository) {
-      console.log('Repository found:', repository);
-      res.status(200).send(repository);
+    const { idmail, email } = req.headers;
+    const repositories = await Repository.find({
+      idmail: idmail,
+      email: email,
+    });
+
+    if (repositories.length > 0) {
+      console.log("Repositories found:", repositories);
+      res.status(200).json(repositories);
     } else {
-      console.log('Repository not found');
-      res.status(404).send({ error: 'Repository not found' });
+      console.log("No repositories found");
+      res.status(404).json({ error: "No repositories found" });
     }
   } catch (err) {
-    console.error('Error getting repository data:', err);
-    res.status(400).send(err);
+    console.error("Error getting repository data:", err);
+    res.status(400).json({ error: err.message });
   }
 });
 
-app.post("/startUserProyect", async (req, res) => {
+app.post("/startUserProject", async (req, res) => {
   try {
-    console.log(req.body)
-    const { userGit, nameArchive, command, port } = req.body;
+    const { userGit, nameArchive, command, port, email } = req.body;
 
     if (!userGit || !nameArchive || !command || !port) {
-      throw new Error("Todos los campos son obligatorios: userGit, nameArchive, command, port");
+      throw new Error(
+        "All fields are required: userGit, nameArchive, command, port"
+      );
     }
 
-    console.log(`Iniciando el proyecto para el repositorio ${nameArchive} del usuario ${userGit} en el puerto ${port}`);
+    console.log(
+      `Starting project for repository ${nameArchive} of user ${userGit} on port ${port}`
+    );
 
-    await startProject(userGit, nameArchive, command, wss, port);
+    await startProject(userGit, nameArchive, command, port, email);
 
-    console.log(`Proyecto ${nameArchive} iniciado en el puerto ${port}`);
-    res.status(200).send({ message: `Proyecto ${nameArchive} iniciado en el puerto ${port}` });
+    console.log(`Project ${nameArchive} started on port ${port}`);
+    res
+      .status(200)
+      .json({ message: `Project ${nameArchive} started on port ${port}` });
   } catch (err) {
-    console.error('Error starting user project:', err);
-    res.status(400).send({ error: err.message });
+    console.error("Error starting user project:", err);
+    res.status(400).json({ error: err.message });
   }
 });
 
-app.on('upgrade', (request, socket, head) => {
-  wss.handleUpgrade(request, socket, head, (socket) => {
-    wss.emit('connection', socket, request);
-  });
-});
+async function startProject(userGit, nameArchive, command, port, email) {
+  const projectPath = path.join(email, userGit, nameArchive);
+  const vhostDomain = `${nameArchive}.local:${port}`;
 
-app.listen(PORT, () => {
-  console.log(`Servidor está corriendo en http://localhost:${PORT}`);
-});
+  console.log("Initializing the project...");
+  await executeCommand(`npm install && ${command}`, projectPath);
 
-async function startProject(userGit, nameArchive, command, wss, port) {
-  return new Promise((resolve, reject) => {
-    console.log("Inicializando el proyecto...");
-
-    const vhostDomain = `${nameArchive}.local:${port}`;
-
-    const initProcess = exec(`cd ./${userGit}/${nameArchive} && npm install && ${command}`);
-
-    initProcess.stdout.on('data', (data) => {
-      console.log(`stdout: ${data}`);
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(`stdout: ${data}`);
-        }
-      });
-    });
-
-    initProcess.stderr.on('data', (data) => {
-      console.error(`stderr: ${data}`);
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(`stderr: ${data}`);
-        }
-      });
-    });
-
-    initProcess.on('close', (code) => {
-      if (code === 0) {
-        console.log(`Proyecto inicializado correctamente y disponible en ${vhostDomain}`);
-        wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(`Proyecto inicializado correctamente y disponible en ${vhostDomain}`);
-          }
-        });
-        resolve();
-      } else {
-        const errorMessage = `Proceso terminado con código de error: ${code}`;
-        console.error(errorMessage);
-        wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(errorMessage);
-          }
-        });
-        reject(new Error(errorMessage));
-      }
-    });
-  });
+  console.log(
+    `Project initialized successfully and available at ${vhostDomain}`
+  );
+  sendWebSocketMessage(
+    `Project initialized successfully and available at ${vhostDomain}`
+  );
 }
+
+// WebSocket upgrade
+app.on("upgrade", (request, socket, head) => {
+  wss.handleUpgrade(request, socket, head, (socket) => {
+    wss.emit("connection", socket, request);
+  });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server is running on http://localhost:${PORT}`);
+});

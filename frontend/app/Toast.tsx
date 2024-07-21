@@ -1,9 +1,10 @@
 import { useToast } from "@/components/ui/use-toast";
 
 interface Toast {
+  type: string
   title: { profile: string, repository: string },
   description: string
-  command: string
+  command?: string
   port: number
 }
 
@@ -13,8 +14,8 @@ export function useDeployToast() {
   function toastDeploy(toastNotification: Toast) {
     console.log(toastNotification);
     toast({
-      title: `Clonando ${toastNotification.title.repository} del usuario ${toastNotification.title.profile}`,
-      description: `Guardando en la carpeta: ${toastNotification.description} y su comando: ${toastNotification.command}`,
+      title: `${toastNotification.type} ${toastNotification.title.repository} del usuario ${toastNotification.title.profile}`,
+      description: `${toastNotification.description} and your command: ${toastNotification.command}`,
     });
   }
 

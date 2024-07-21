@@ -2,18 +2,21 @@
 const mongoose = require('mongoose');
 
 const repositorySchema = new mongoose.Schema({
-  userGit: {
+  usergit: {
     type: String,
     required: true,
   },
-  nameArchive: {
+  namearchive: {
     type: String,
     required: true,
   },
   port: {
     type: Number,
   },
-  idMail: {
+  email: {
+    type: String
+  },
+  idmail: {
     type: String
   },
   command: {
