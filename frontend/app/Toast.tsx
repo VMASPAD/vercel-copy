@@ -14,7 +14,7 @@ export function useDeployToast() {
   function toastDeploy(toastNotification: Toast) {
     console.log(toastNotification);
     toast({
-      title: `${toastNotification.type} ${toastNotification.title.repository} del usuario ${toastNotification.title.profile}`,
+      title: `${toastNotification.type} ${toastNotification.title.repository} of the user ${toastNotification.title.profile}`,
       description: `${toastNotification.description} and your command: ${toastNotification.command}`,
     });
   }
